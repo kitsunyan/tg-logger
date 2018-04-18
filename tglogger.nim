@@ -169,7 +169,7 @@ if params.len >= 1 and params[0] == "daemon":
             try:
               let json = parseJson($str)
               let event = json["event"].getStr
-              if event != "online-status":
+              if event == "message":
                 let idPeer = json["id"].getStr.peer
                 let id = idPeer.accessHash
                 let targetId = idPeer.id
@@ -185,7 +185,10 @@ if params.len >= 1 and params[0] == "daemon":
                   .map(x => x.extractName).get((nil, nil))
                 let forwardTime = json.opt("fwd_date").map(x => x.getInt * 1000).get(0)
                 let time = (json["date"].getInt * 1000).int64
-                let message = json.opt("text").map(x => x.getStr(nil)).get(nil)
+                let text = json.opt("text").map(x => x.getStr(nil)).get(nil)
+                let caption = json.opt("media").map(x => x.opt("caption")).flatten
+                  .map(x => x.getStr(nil)).get(nil)
+                let message = if text != nil and text.len > 0: text else: caption
 
                 db.exec(("INSERT INTO log (id, target_id, from_id, from_name, from_username, " &
                   "to_id, to_name, to_username, reply_id, " &
