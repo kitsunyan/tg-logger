@@ -1,5 +1,5 @@
 import algorithm, db_sqlite, future, json, options, os, osproc, posix,
-  sequtils, strutils, tables, times
+  sequtils, sticker, strutils, tables, times
 
 type Color {.pure.} = enum
   normal = "\x1b[0m"
@@ -45,6 +45,9 @@ proc extractName(node: JsonNode): (string, string) =
 
 template nilIfEmpty(s: string): string =
   if s == nil or s.len == 0: nil else: s
+
+proc stickerFile(id: int64): string =
+  ".telegram-cli/downloads/download_" & $id & ".webp"
 
 proc convert(create: string, handleRow: (DbConn, seq[string]) -> void) =
   let db = open("log.sqlite", "", "", "")
@@ -107,17 +110,21 @@ proc id(p: Peer): int64 =
 
 let params = commandLineParams()
 if params.len >= 1 and params[0] == "daemon":
-  var fd: array[2, cint]
-  discard pipe(fd)
+  var fdin: array[2, cint]
+  var fdout: array[2, cint]
+  discard pipe(fdin)
+  discard pipe(fdout)
 
   let pid = fork()
   if pid == 0:
-    discard close(fd[0])
-    discard close(1)
-    discard dup(fd[1])
-    discard close(fd[1])
+    discard close(fdin[1])
     discard close(0)
-    discard open("/dev/null")
+    discard dup(fdin[0])
+    discard close(fdin[0])
+    discard close(fdout[0])
+    discard close(1)
+    discard dup(fdout[1])
+    discard close(fdout[1])
     discard close(2)
     discard open("/dev/null")
     discard prctl(PR_SET_PDEATHSIG, SIGINT.culong)
@@ -130,7 +137,8 @@ if params.len >= 1 and params[0] == "daemon":
     deallocCStringArray(cexec)
     quit(code)
   else:
-    discard close(fd[1])
+    discard close(fdin[0])
+    discard close(fdout[1])
     var linebuf: seq[cchar] = @[]
     var readbuf: array[80, cchar]
 
@@ -156,7 +164,7 @@ if params.len >= 1 and params[0] == "daemon":
     )""".sql)
 
     while true:
-      let count = read(fd[0], addr(readbuf[0]), readbuf.len)
+      let count = read(fdout[0], addr(readbuf[0]), readbuf.len)
       if count <= 0:
         break
       var fromIndex = 0
@@ -173,7 +181,8 @@ if params.len >= 1 and params[0] == "daemon":
               let json = parseJson($str)
               let event = json["event"].getStr
               if event == "message":
-                let idPeer = json["id"].getStr.peer
+                let idStr = json["id"].getStr
+                let idPeer = idStr.peer
                 let id = idPeer.accessHash
                 let targetId = idPeer.id
                 let fromId = json["from"]["id"].getStr.peer.id
@@ -207,6 +216,10 @@ if params.len >= 1 and params[0] == "daemon":
                   else:
                     0
 
+                if stickerId != 0 and not existsFile(stickerFile(stickerId)):
+                  let s: cstring = "load_document " & idStr & "\n"
+                  discard write(fdin[1], s, s.len)
+
                 db.exec(("INSERT INTO log (id, target_id, from_id, from_name, from_username, " &
                   "to_id, to_name, to_username, reply_id, " &
                   "forward_id, forward_name, forward_username, forward_time, " &
@@ -227,6 +240,8 @@ if params.len >= 1 and params[0] == "daemon":
     db.close()
 
     var rescode: cint
+    discard close(fdin[1])
+    discard close(fdout[0])
     discard waitpid(pid, rescode, 0)
     programResult = 0
 elif params.len >= 2 and params[0] == "id":
@@ -410,6 +425,11 @@ elif params.len >= 1 and params[0] == "query":
       else:
         echo(^Color.red, "> Failed to extract replied message", ^Color.normal)
     echo(formatTitle(message, true), formatMessageText(message, true))
+
+    if color and existsFile(stickerFile(message.stickerId)):
+      let escapes = convertSticker(stickerFile(message.stickerId), 12)
+      for line in escapes:
+        echo(line.map(x => x & "  ").foldl(a & b), "\x1b[0m")
 
   db.close()
   programResult = if columns.len > 0: 0 else: 1

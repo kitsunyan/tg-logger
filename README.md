@@ -7,6 +7,7 @@ Simple telegram logger which uses telegram-cli and sqlite DBMS.
 Nim compiler and telegram-cli are required. Run `make` to build the project.
 
 You should build telegram-cli with `tg.patch` in order to log stickers.
+`imagemagick` and `libwebp` are required to view stickers from terminal.
 
 ## Configuration
 
