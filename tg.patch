@@ -1,0 +1,39 @@
+--- a/json-tg.c
++++ b/json-tg.c
+@@ -232,7 +232,14 @@ json_t *json_pack_media (struct tgl_message_media *M) {
+   case tgl_message_media_audio:
+   case tgl_message_media_video:
+   case tgl_message_media_document_encr:
+-    assert (json_object_set (res, "type", json_string ("document")) >= 0);
++    if (M->type == tgl_message_media_document &&
++      (M->document->flags & TGLDF_STICKER) == TGLDF_STICKER) {
++      assert (json_object_set (res, "type", json_string ("sticker")) >= 0);
++      assert (json_object_set (res, "emoji", json_string (M->document->caption)) >= 0);
++      assert (json_object_set (res, "id", json_integer (M->document->id)) >= 0);
++    } else {
++      assert (json_object_set (res, "type", json_string ("document")) >= 0);
++    }
+     break;
+   case tgl_message_media_unsupported:
+     assert (json_object_set (res, "type", json_string ("unsupported")) >= 0);
+--- a/tgl/structures.c
++++ b/tgl/structures.c
+@@ -916,6 +916,7 @@ void tglf_fetch_document_attribute (struct tgl_state *TLS, struct tgl_document *
+     return;
+   case CODE_document_attribute_sticker:
+     D->flags |= TGLDF_STICKER;
++    D->caption = DS_STR_DUP (DS_DA->alt);
+     return;
+   case CODE_document_attribute_video:
+     D->flags |= TGLDF_VIDEO;
+@@ -928,7 +929,9 @@ void tglf_fetch_document_attribute (struct tgl_state *TLS, struct tgl_document *
+     D->duration = DS_LVAL (DS_DA->duration);
+     return;
+   case CODE_document_attribute_filename:
+-    D->caption = DS_STR_DUP (DS_DA->file_name);
++    if (!D->caption) {
++      D->caption = DS_STR_DUP (DS_DA->file_name);
++    }
+     return;
+   default:
+     assert (0);

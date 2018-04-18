@@ -6,6 +6,7 @@ type Color {.pure.} = enum
   red = "\x1b[0;31m"
   green = "\x1b[0;32m"
   blue = "\x1b[0;34m"
+  magenta = "\x1b[0;35m"
 
 let color = isatty(1) == 1
 template `^`(c: Color): string =
@@ -149,7 +150,9 @@ if params.len >= 1 and params[0] == "daemon":
       forward_username TEXT,
       forward_time LONG NOT NULL,
       time LONG NOT NULL,
-      message TEXT
+      message TEXT,
+      document_type TEXT,
+      sticker_id LONG NOT NULL
     )""".sql)
 
     while true:
@@ -188,14 +191,30 @@ if params.len >= 1 and params[0] == "daemon":
                 let text = json.opt("text").map(x => x.getStr(nil)).get(nil)
                 let caption = json.opt("media").map(x => x.opt("caption")).flatten
                   .map(x => x.getStr(nil)).get(nil)
-                let message = if text != nil and text.len > 0: text else: caption
+                let emoji = json.opt("media").map(x => x.opt("emoji")).flatten
+                  .map(x => x.getStr(nil)).get(nil)
+                let message = if text != nil and text.len > 0:
+                    text
+                  elif caption != nil and caption.len > 0:
+                    caption
+                  else:
+                    emoji
+                let documentType = json.opt("media").map(x => x.opt("type")).flatten
+                  .map(x => x.getStr(nil)).get(nil)
+                let stickerId = if documentType != nil and documentType == "sticker":
+                    json.opt("media").map(x => x.opt("id")).flatten
+                      .map(x => x.getInt.int64).get(0)
+                  else:
+                    0
 
                 db.exec(("INSERT INTO log (id, target_id, from_id, from_name, from_username, " &
                   "to_id, to_name, to_username, reply_id, " &
                   "forward_id, forward_name, forward_username, forward_time, " &
-                  "time, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").sql,
+                  "time, message, document_type, sticker_id) " &
+                  "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").sql,
                   id, targetId, fromId, fromName, fromUsername, toId, toName, toUsername,
-                  replyId, forwardId, forwardName, forwardUsername, forwardTime, time, message)
+                  replyId, forwardId, forwardName, forwardUsername, forwardTime,
+                  time, message, documentType, stickerId)
             except:
               let msg = getCurrentExceptionMsg()
               if msg != "UNIQUE constraint failed: log.id":
@@ -270,6 +289,7 @@ elif params.len >= 1 and params[0] == "query":
       @[]
 
   type Message = object
+    row: seq[string]
     id: string
     targetId: int64
     fromId: int64
@@ -285,6 +305,8 @@ elif params.len >= 1 and params[0] == "query":
     forwardTime: Option[int64]
     time: int64
     message: Option[string]
+    documentType: Option[string]
+    stickerId: int64
 
   proc message(row: seq[string]): Message =
     template opt(s: string): Option[string] =
@@ -307,13 +329,15 @@ elif params.len >= 1 and params[0] == "query":
       .map(x => (if x == 0: none(int64) else: some(x))).flatten
     let time = row[13].parseBiggestInt.int64
     let message = row[14].nilIfEmpty.opt
+    let documentType = row[15].nilIfEmpty.opt
+    let stickerId = row[16].parseBiggestInt.int64
 
-    Message(id: id, targetId: targetId,
+    Message(row: row, id: id, targetId: targetId,
       fromId: fromId, fromName: fromName, fromUsername: fromUsername,
       toId: toId, toName: toName, toUsername: toUsername,
       replyId: replyId, forwardId: forwardId, forwardName: forwardName,
       forwardUsername: forwardUsername, forwardTime: forwardTime,
-      time: time, message: message)
+      time: time, message: message, documentType: documentType, stickerId: stickerId)
 
   let messages = columns.map(message)
   let messagesById = messages.map(m => (m.id, m)).toTable
@@ -345,7 +369,7 @@ elif params.len >= 1 and params[0] == "query":
     let forwardHeader = if message.forwardTime.isSome:
         (if color: ^Color.blue else: "") &
           "Forwarded [" & formatTime(message.forwardTime.unsafeGet) & "] " &
-          formatName(message.forwardName.get, message.forwardUsername) &
+          formatName(message.forwardName.get("Untitled"), message.forwardUsername) &
           (if color: ^Color.normal else: "") & "\n"
       else:
         ""
@@ -360,12 +384,21 @@ elif params.len >= 1 and params[0] == "query":
       (if multipleChats: " (" & targetName & ")" else: "") & ": "
 
   proc formatMessageText(message: Message, color: bool): string =
-    if message.message.isNone:
-      (if color: ^Color.red else: "") &
-        "photo, sticker or document" &
-        (if color: ^Color.normal else: "")
+    let attachmentPrefix = if message.message.isNone or message.documentType.isSome:
+        (if color: ^Color.magenta else: "") &
+          "[attachment: " & message.documentType.get("unknown") & "]" &
+          (if color: ^Color.normal else: "")
+      else:
+        ""
+
+    let messageText = message.message.get("")
+
+    if attachmentPrefix.len > 0 and messageText.len > 0:
+      attachmentPrefix & " " & messageText
+    elif attachmentPrefix.len > 0:
+      attachmentPrefix
     else:
-      message.message.unsafeGet
+      messageText
 
   for message in messages:
     if message.replyId.isSome:
@@ -459,6 +492,37 @@ elif params.len >= 1 and params[0] == "convert-v2":
       id, targetId, fromId, fromName, fromUsername, toId, toName, toUsername,
       replyId, forwardId, forwardName, forwardUsername, forwardTime, time, message))
 
+  programResult = 0
+elif params.len >= 1 and params[0] == "convert-v3":
+  let db = open("log.sqlite", "", "", "")
+
+  db.exec("ALTER TABLE log RENAME TO oldlog".sql)
+  db.exec("""CREATE TABLE IF NOT EXISTS log (
+      id TEXT PRIMARY KEY NOT NULL,
+      target_id LONG NOT NULL,
+      from_id LONG NOT NULL,
+      from_name TEXT NOT NULL,
+      from_username TEXT,
+      to_id LONG NOT NULL,
+      to_name TEXT NOT NULL,
+      to_username TEXT,
+      reply_id TEXT,
+      forward_id LONG NOT NULL,
+      forward_name TEXT,
+      forward_username TEXT,
+      forward_time LONG NOT NULL,
+      time LONG NOT NULL,
+      message TEXT,
+      document_type TEXT,
+      sticker_id LONG NOT NULL
+    )""".sql)
+
+  db.exec(("INSERT INTO log SELECT *, NULL, 0 FROM oldlog").sql)
+
+  db.exec("DROP TABLE oldlog".sql)
+  db.exec("VACUUM".sql)
+
+  db.close()
   programResult = 0
 else:
   echo("Invalid arguments")
