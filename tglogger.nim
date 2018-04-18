@@ -370,9 +370,9 @@ elif params.len >= 1 and params[0] == "query":
       if allMessagesById.hasKey(replyId):
         let replyMessage = allMessagesById[replyId]
         echo(^Color.green, "> ", (formatTitle(replyMessage, false) &
-          formatMessageText(replyMessage, false)).replace("\n", "\n> "), Color.normal)
+          formatMessageText(replyMessage, false)).replace("\n", "\n> "), ^Color.normal)
       else:
-        echo(^Color.red, "> Failed to extract replied message", Color.normal)
+        echo(^Color.red, "> Failed to extract replied message", ^Color.normal)
     echo(formatTitle(message, true), formatMessageText(message, true))
 
   db.close()
