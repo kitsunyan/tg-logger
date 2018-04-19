@@ -2,7 +2,7 @@
 
 all: tglogger
 
-tglogger: tglogger.nim
+tglogger: *.nim
 	nim c -o:$@ $<
 
 clean:
