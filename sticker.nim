@@ -16,18 +16,29 @@ proc escape256(r: int, g: int, b: int, a: int): int =
   else:
     0
 
-template formatPair(p0: Pixel, p1: Pixel): string =
-  let p0v = escape256(p0.r, p0.g, p0.b, p0.a)
-  let p1v = escape256(p1.r, p1.g, p1.b, p1.a)
-
-  if p0v == 0 and p1v == 0:
-    "\x1b[0m "
-  elif p0v != 0 and p1v == 0:
-    "\x1b[0;38;5;" & $p0v & "m\xe2\x96\x80"
-  elif p0v == 0 and p1v != 0:
-    "\x1b[0;38;5;" & $p1v & "m\xe2\x96\x84"
+template formatPair(trueColor: bool, p0: Pixel, p1: Pixel): string =
+  if trueColor:
+    if p0.a < 127 and p1.a < 127:
+      "\x1b[0m "
+    elif p0.a >= 127 and p1.a < 127:
+      "\x1b[0;38;2;" & $p0.r & ";" & $p0.g & ";" & $p0.b & "m\xe2\x96\x80"
+    elif p0.a < 127 and p1.a >= 127:
+      "\x1b[0;38;2;" & $p1.r & ";" & $p1.g & ";" & $p1.b & "m\xe2\x96\x84"
+    else:
+      "\x1b[38;2;" & $p0.r & ";" & $p0.g & ";" & $p0.b & ";" &
+        "48;2;" & $p1.r & ";" & $p1.g & ";" & $p1.b & "m\xe2\x96\x80"
   else:
-    "\x1b[38;5;" & $p0v & ";48;5;" & $p1v & "m\xe2\x96\x80"
+    let p0v = escape256(p0.r, p0.g, p0.b, p0.a)
+    let p1v = escape256(p1.r, p1.g, p1.b, p1.a)
+
+    if p0v == 0 and p1v == 0:
+      "\x1b[0m "
+    elif p0v != 0 and p1v == 0:
+      "\x1b[0;38;5;" & $p0v & "m\xe2\x96\x80"
+    elif p0v == 0 and p1v != 0:
+      "\x1b[0;38;5;" & $p1v & "m\xe2\x96\x84"
+    else:
+      "\x1b[38;5;" & $p0v & ";48;5;" & $p1v & "m\xe2\x96\x80"
 
 proc convertStickerBytes(file: string, size: int): (int, int, seq[cchar]) =
   var fd: array[2, cint]
@@ -101,7 +112,7 @@ proc even(pixels: seq[seq[Pixel]]): seq[seq[Pixel]] =
   else:
     even
 
-proc convertSticker*(file: string, size: int): seq[string] =
+proc convertSticker*(file: string, size: int, trueColor: bool): seq[string] =
   let pixels = convertStickerPixels(file, 2 * size).even
   result = @[]
 
@@ -112,5 +123,5 @@ proc convertSticker*(file: string, size: int): seq[string] =
     result &= y0l.zip(y1l)
       .map(pair => (block:
         let (i0, i1) = pair
-        formatPair(i0, i1)))
+        formatPair(trueColor, i0, i1)))
       .foldl(a & b)

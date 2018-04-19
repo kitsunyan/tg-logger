@@ -427,7 +427,7 @@ elif params.len >= 1 and params[0] == "query":
     echo(formatTitle(message, true), formatMessageText(message, true))
 
     if color and existsFile(stickerFile(message.stickerId)):
-      let lines = convertSticker(stickerFile(message.stickerId), 12)
+      let lines = convertSticker(stickerFile(message.stickerId), 12, false)
       for line in lines:
         echo(line, "\x1b[0m")
 
