@@ -8,10 +8,6 @@ type Color {.pure.} = enum
   blue = "\x1b[0;34m"
   magenta = "\x1b[0;35m"
 
-let color = isatty(1) == 1
-template `^`(c: Color): string =
-  if color: $c else: ""
-
 var PR_SET_PDEATHSIG {.importc: "PR_SET_PDEATHSIG", header: "<sys/prctl.h>".}: cint
 
 proc prctl(option: cint, arg2: culong = 0, arg3: culong = 0, arg4: culong = 0,
@@ -108,7 +104,37 @@ proc id(p: Peer): int64 =
   else:
     p.peerId
 
-let params = commandLineParams()
+let allParams = commandLineParams()
+let (params, opts) = block:
+  proc filterParams(i: int, res: seq[string], opts: seq[string]):
+    (seq[string], seq[string]) =
+    if i >= allParams.len:
+      (res, opts)
+    elif allParams[i] == "--":
+      (res & allParams[i + 1 .. ^1], opts)
+    elif allParams[i].len > 2 and allParams[i][0 .. 1] == "--":
+      filterParams(i + 1, res, opts & allParams[i][2 .. ^1])
+    else:
+      filterParams(i + 1, res & allParams[i], opts)
+
+  filterParams(0, @[], @[])
+
+let forceColor = opts.contains("color")
+let forceNoColor = opts.contains("nocolor")
+
+let color = (forceColor or isatty(1) == 1) and not forceNoColor
+template `^`(c: Color): string =
+  if color: $c else: ""
+
+let trueColor = opts.contains("true-color")
+
+let stickerSize = some(opts
+  .filter(x => x.find("sticker-size=") == 0)
+  .map(x => x[13 .. ^1].parseInt))
+  .map(x => (if x.len > 0: some(x[^1]) else: none(int)))
+  .flatten
+  .get(12)
+
 if params.len >= 1 and params[0] == "daemon":
   var fdin: array[2, cint]
   var fdout: array[2, cint]
@@ -426,8 +452,8 @@ elif params.len >= 1 and params[0] == "query":
         echo(^Color.red, "> Failed to extract replied message", ^Color.normal)
     echo(formatTitle(message, true), formatMessageText(message, true))
 
-    if color and existsFile(stickerFile(message.stickerId)):
-      let lines = convertSticker(stickerFile(message.stickerId), 12, false)
+    if color and stickerSize > 0 and existsFile(stickerFile(message.stickerId)):
+      let lines = convertSticker(stickerFile(message.stickerId), stickerSize, trueColor)
       for line in lines:
         echo(line, "\x1b[0m")
 
