@@ -1,6 +1,8 @@
 import future, posix, sequtils, strutils
 
-proc escape(r: int, g: int, b: int, a: int): string =
+type Pixel = tuple[r: int, g: int, b: int, a: int]
+
+proc escape256(r: int, g: int, b: int, a: int): int =
   if a >= 127:
     template `@`(x: int): int = (x / 256 * 25).int
     template `^`(x: int): int = (x / 256 * 6).int
@@ -10,9 +12,22 @@ proc escape(r: int, g: int, b: int, a: int): string =
       else:
         ^r * 6 * 6 + ^g * 6 + ^b + 16
 
-    "\x1b[48;5;" & $index & "m"
+    index
   else:
-    "\x1b[0m"
+    0
+
+template formatPair(p0: Pixel, p1: Pixel): string =
+  let p0v = escape256(p0.r, p0.g, p0.b, p0.a)
+  let p1v = escape256(p1.r, p1.g, p1.b, p1.a)
+
+  if p0v == 0 and p1v == 0:
+    "\x1b[0m "
+  elif p0v != 0 and p1v == 0:
+    "\x1b[0;38;5;" & $p0v & "m\xe2\x96\x80"
+  elif p0v == 0 and p1v != 0:
+    "\x1b[0;38;5;" & $p1v & "m\xe2\x96\x84"
+  else:
+    "\x1b[38;5;" & $p0v & ";48;5;" & $p1v & "m\xe2\x96\x80"
 
 proc convertStickerBytes(file: string, size: int): (int, int, seq[cchar]) =
   var fd: array[2, cint]
@@ -67,12 +82,35 @@ proc convertStickerBytes(file: string, size: int): (int, int, seq[cchar]) =
     else:
       (0, 0, @[])
 
-proc convertSticker*(file: string, size: int): seq[seq[string]] =
+proc convertStickerPixels(file: string, size: int): seq[seq[Pixel]] =
   let (width, height, bytes) = convertStickerBytes(file, size)
 
   if width > 0 and height > 0 and 4 * width * height == bytes.len:
     bytes.distribute(height).map(s => s.distribute(width)
-      .map(c => escape(c[0].int and 0xff, c[1].int and 0xff,
+      .map(c => (c[0].int and 0xff, c[1].int and 0xff,
         c[2].int and 0xff, c[3].int and 0xff)))
   else:
     @[]
+
+proc even(pixels: seq[seq[Pixel]]): seq[seq[Pixel]] =
+  let even = pixels.map(line =>
+    (if line.len %% 2 == 1: line & @[(0, 0, 0, 0)] else: line))
+
+  if even.len %% 2 == 1:
+    even & (0, 0, 0, 0).repeat(even[0].len)
+  else:
+    even
+
+proc convertSticker*(file: string, size: int): seq[string] =
+  let pixels = convertStickerPixels(file, 2 * size).even
+  result = @[]
+
+  for y in 0 .. (pixels.len /% 2) - 1:
+    let y0l = pixels[2 * y]
+    let y1l = pixels[2 * y + 1]
+
+    result &= y0l.zip(y1l)
+      .map(pair => (block:
+        let (i0, i1) = pair
+        formatPair(i0, i1)))
+      .foldl(a & b)

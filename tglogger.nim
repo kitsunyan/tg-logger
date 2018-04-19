@@ -427,9 +427,9 @@ elif params.len >= 1 and params[0] == "query":
     echo(formatTitle(message, true), formatMessageText(message, true))
 
     if color and existsFile(stickerFile(message.stickerId)):
-      let escapes = convertSticker(stickerFile(message.stickerId), 12)
-      for line in escapes:
-        echo(line.map(x => x & "  ").foldl(a & b), "\x1b[0m")
+      let lines = convertSticker(stickerFile(message.stickerId), 12)
+      for line in lines:
+        echo(line, "\x1b[0m")
 
   db.close()
   programResult = if columns.len > 0: 0 else: 1
